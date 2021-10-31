@@ -1,0 +1,16 @@
+
+El broker astronómico ALeRCE usa un clasificador con machine learning que usa la variabilidad de la magnitud de las fuentes astronómicas, en forma de curvas de luz, para clasificar estas fuentes en un conjunto de clases como binarias eclipsantes, RR Lyrae y \texttt{active galactic nuclei}. ALeRCE se encarga también de calcular distintas características de las curvas de luz para el clasificador, y entre estas esta el periodo.
+
+En esta memoria, se optimiza el algoritmo de cálculo de periodo usado en ALeRCE, MHAOV, implementando y diseñando una versión paralela en GPU del mismo algoritmo para mejorar su rendimiento, y usando un algoritmo de post proceso para mejorar su precisión, llamado promediado de subarmónicos. La implementación en GPU de MHAOV, denominada GMHAOV, se realizó en CUDA, y el algoritmo elegido como post proceso para mejorar la precisión fue el promediado de subarmónicos.
+
+La validación de la versión paralela de MHAOV no se logra completar, presentando una desviación promedio del resultado de MHAOV de casi $120\%$ por cada frecuencia de prueba para datos reales, pero obteniendo una desviación de solo $5.58 \times 10^{-9}$ para datos generados automáticamente. La causa de esto no se estudia a fondo, pero el efecto de este error en la precisión es de menos de $1\%$.
+
+En la paralelización, se obtuvo un speedup máximo de $10$ y mínimo de $3$ al calcular el periodograma de forma paralela para $100$ y $1000$ curvas con $150$ puntos y $7000$ frecuencias de prueba, respectivamente. El algoritmo de promediado de subarmónicos y una modificación de este llamado promediado de armónicos demostraron ser relevantes para una parte de las curvas de luz de binarias eclipsantes y RR Lyrae, llegando a incrementar la precisión en $10$ veces en el caso de incluir el promediado de armónicos en GMHAOV, pero siendo contraproducente para algunos casos, como el promediado de subarmónicos en binarias eclipsantes.
+
+Se estudió el código y la teoría de MHAOV, junto con el código de otro periodograma implementado en GPU llamado GCE, y además se investigó como crear interfaces en Python para ejecutar código CUDA, junto con los fundamentos de la detección de señales en curvas de luz.
+
+Como trabajo futuro se propone usar el resultado del promediado de subarmónicos y de armónicos, GCE y GMHAOV para entrenar el clasificador de ALeRCE y evaluar el impacto que tendría en su precisión. Esto permitiría decidir si vale la pena incrementar el tiempo de ejecución del cálculo de periodos para mejorar el clasificador, ejecutando GCE y el promediado de armónicos/subarmónicos junto con GMHAOV, ya que el speedup de GMHAOV y la eficiencia de GCE permitiría hacer esto sin un impacto mayor en el tiempo de ejecución actual del periodograma.
+
+
+
+
