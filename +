@@ -100,7 +100,7 @@ Ya que este trabajo consistió en desarrollar implementaciones eficientes de alg
     \item {\bf Métodos para identificar subarmónicos:} Como se describió en la sección \ref{sec:motivacion}, periodogramas como MHAOV suelen identificar subarmónicos del periodo real para algunos objetos astronómicos, por lo que es beneficioso investigar algoritmos que puedan identificar cuando pasa esto y poder encontrar el período real.
 \end{itemize}
 
-Se tomó la decisión de implementar GMHAOV en CUDA \cite{cuda}, ya que se tenía experiencia con el desarrollo de algoritmos en GPU en este lenguaje. Esto además permite utilizar el código de GCE como referencia para poder ejecutar código en CUDA desde python. El diseño de GMHAOV se realizó en base a que el cálculo de la medida de confianza es independiente entre curvas de luz y frecuencias, y de hecho el mismo diseño de MHAOV permitía paralelizar este cálculo para cada punto de cada curva de luz.
+Se tomó la decisión de implementar GMHAOV en CUDA, ya que se tenía experiencia con el desarrollo de algoritmos en GPU en este lenguaje. Esto además permite utilizar el código de GCE como referencia para poder ejecutar código en CUDA desde python. El diseño de GMHAOV se realizó en base a que el cálculo de la medida de confianza es independiente entre curvas de luz y frecuencias, y de hecho el mismo diseño de MHAOV permitía paralelizar este cálculo para cada punto de cada curva de luz.
 
 La implementación de GMHAOV se validó usando el código de generación de curvas de luz disponible en el 
 \href{https://github.com/alercebroker/P4J}{repositorio que contiene MHAOV}, y curvas de luz de sets etiquetados (conjuntos cuyas propiedades son conocidas). Como GMHAOV debe presentar exactamente los mismos resultados que su versión secuencial, bastó con comparar los valores de $\Theta(\omega)$ para ambas versiones y asegurarse que estén lo suficientemente cerca. Usando el generador de curvas de luz, fue posible evaluar el tiempo de ejecución de GMHAOV y compararlo con GCE y MHAOV en función del número de frecuencias de prueba y número de curvas de luz.
@@ -119,67 +119,11 @@ Para estudiar el impacto de los algoritmos implementados en el clasificador, se 
     \item {\bf Análisis y conclusión:} Se realiza un análisis de los resultados expuestos en la sección anterior, se concluye respecto a los objetivos y se discute el trabajo futuro.
 \end{itemize}
 
-\chapter{Antecedentes}\label{chap:antecedentes}
-En este capítulo se presentan conceptos y técnicas que son necesarios para poder entender la solución presentada en este documento.
-Se empieza por explicar los conceptos fundamentales de la paralelización en GPU, la arquitectura usada en la solución, la manera en la que se maneja la memoria en CUDA y finalmente se habla sobre la técnica de reducción, que permite reducir un arreglo, usando suma o resta por ejemplo, de manera paralela.
-\section{Paralelización en GPU}\label{sec:paralelizacion}
-La fortaleza de las GPU es que contienen miles de núcleos, donde cada uno puede tratar con un sub-problema pequeño, sacrificando poder de computación de un núcleo individual por poder de paralelización. Sin embargo, una desventaja de las GPU es que, debido a la gran cantidad de unidades de procesamiento, no se deja mucho espacio al caché, como se observa en la Figura \ref{fig:gpu-arch} por lo que los accesos a memoria son muy costosos y se tienen que manejar eficientemente. En una CPU, en cambio, se tiene una pequeña cantidad de núcleos a cambio de que el poder de computación de un núcleo individual es mucho más alto que del de una GPU. \cite{cuda-guide}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.8\textwidth]{figs/gpu-arch.png}
-\caption{Distribución de las unidades de procesamiento y memoria en la CPU y GPU. En la GPU, las unidades de control y memoria usan mucho menos espacio que las de procesamiento en comparación con la CPU.}
-    \label{fig:gpu-arch}
-\end{figure}
-
-Un buen ejemplo de un problema que se beneficia del uso de una GPU en vez de una CPU es la suma de vectores, que es un problema al que se le dice data-paralel, pues la suma de cada componente de los vectores se puede realizar de forma paralela al resto. Este problema es ideal para la GPU pues todas las unidades de procesamiento realizan la misma tarea de baja complejidad y su acceso a la memoria al recuperar los valores a sumar es óptimo pues maximiza el ancho de banda usado.
-\section{Arquitectura de CUDA}\label{sec:arquitectura-cuda}
-Para la computación en GPU, las dos alternativas más populares son CUDA y OpenCL. La gran desventaja de CUDA es que es exclusivo para las tarjetas de video NVIDIA más modernas, mientras que OpenCL es compatible con una gran cantidad de tarjetas de video, e incluso puede ser ejecutado en CPU. Sin embargo, la documentación y herramientas de CUDA son mucho más extensivas que las de OpenCL. Además, el memorista cuenta con experiencia en CUDA y tanto el memorista como ALeRCE cuentan con GPUs de NVIDIA, por lo que la tecnología elegida para el desarrollo de la solución fue CUDA.
-
-CUDA permite la creación de funciones en C++ llamadas kernel, que se ejecutan paralelamente por todos los núcleos de la GPU. Cada thread puede acceder a información sobre él mismo para determinar con qué datos hará qué computaciones. Como se observa en el Código \ref{code:kernel-ex}, cada thread puede consultar su id.
-
-\begin{lstlisting}[
-language=C++,
-label={code:kernel-ex},
-caption=Kernel que suma los componentes i de los arreglos A y B y lo guarda en el arreglo C]
-__global__ void VecAdd(float* A, float* B, float* C)
-{
-    int i = threadIdx.x;
-    C[i] = A[i] + B[i];
-}
-\end{lstlisting}
-Cada thread puede ser identíficado en un índice de threads de 1, 2 o 3 dimensiones. Los threads se organizan en bloques de las dimensiones correspondientes, permitiendo una asociación natural entre los threads y arreglos, matrices y volumenes. Finalmente, todos los bloques de threads se organizan en una grilla de bloques, como se observa en la figura \ref{fig:cuda-grilla}.
-
-CUDA permite sincronización de la ejecución a nivel de bloques, deteniendo la ejecución de cada thread hasta que todos lleguen a una llamada de la función \texttt{\_\_syncthreads()}. Esto implica una disminución en la eficiencia, pero esta sincronización a veces es necesaria para evitar data races.
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.8\textwidth]{figs/cuda-grilla.png}
-    \caption{Una grilla se divide en bloques, y cada bloque se subdivide en threads.}
-    \label{fig:cuda-grilla}
-\end{figure}
-\section{Modelo de memoria de CUDA}\label{sec:modelo-memoria}
-En CUDA, cada thread puede acceder a distintos tipos de memoria. La memoria local de los threads es solo visible a este y es la de acceso más rápido, mientras que cada bloque tiene memoria que es visible a todos los threads del bloque. Finalmente, hay una memoria global accesible por todos los threads, pero el acceso es considerablemente más lento. La jerarquía de memoria se aprecia en la Figura \ref{fig:cuda-memoria}.
-
-La CPU solo es capaz de enviar datos a la memoria global, por lo que el kernel es el encargado de acceder a esta y guardar el resultado de la computación en el mismo. Como el acceso a memoria global es el más lento, este se debe realizar de forma eficiente aprovechando el ancho de banda de la GPU.
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=0.7\textwidth]{figs/cuda-memoria.png}
-    \caption{Jerarquía de memoria de CUDA.}
-    \label{fig:cuda-memoria}
-\end{figure}
-
-\section{Reducción en GPU}\label{sev:reduccion}
-Una técnica de paralelización muy usada es la reducción, que, acorde a su nombre, sirve para reducir un o múltiples arreglos a un solo valor usando una operación. Un ejemplo sería sumar todos los valores de un arreglo.
-
-En la figura \ref{fig:cuda-reduccion} se encuentra un ejemplo de reducción para un arreglo en la memoria de un bloque. En cada paso, se van acumulando los valores por cada thread hasta que en el paso final el resultado de la reducción se encuentra en el primer elemento del arreglo. Existen otros métodos de reducción pero se usa este por ser el más simple de implementar \cite{harris-reduction}.
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=1.0\textwidth]{figs/reduccion.png}
-    \caption{Pasos de la reducción, \cite{harris-reduction}.}
-    \label{fig:fig-reduccion-png}
-\end{figure}
-
+%\chapter{Antecedentes}\label{chap:anteceddentes}
+%\section{Paralelización en GPU}\label{sec:paralelizacion}
+%\section{Arquitectura de CUDA}\label{sec:arquitectura-cuda}
+%\section{Modelo de memoria de CUDA}\label{sec:modelo-memoria}
+%\section{Reducción en GPU}\label{sev:reduccion}
 
 \chapter{Análisis del software}\label{chap:analisis}
 
@@ -421,11 +365,8 @@ Se establece un criterio simple para determinar si una señal significativa es r
 \chapter{Implementación}\label{chap:implementación}
 En este capítulo se detalla la implementación de la solución, empezando por como se preparan los datos en python para ser cargados en la memoria de la GPU, la implementación del kernel y finalmente el promediado de subarmónicos.
 \section{Preparación de los datos en python}\label{sec:preparacion-datos}
-Se crea la clase de python GMHAOV, basada en GCE, con una función que recibe las curvas de luz, las frecuencias de prueba y la cantidad de curvas de luz para las cuales se calculará el periodograma, según el cual se dividen las curvas de luz y se envían en lotes para no sobrecargar la memoria, como s observa en el Código \ref{code:data-prep-1}. Se ignoran varias funciones de GCE que no se reimplementaron en GMHAOV, ya que las interfaces que ofrecen son compatibles con cualquier periodograma, como por ejemplo la función que encuentra el máximo o mínimo del mismo.
-\begin{lstlisting}[
-language=Python,
-label={code:data-prep-1},
-caption=Primera parte de la inicialización]
+Se crea la clase de python GMHAOV, basada en GCE, con una función que recibe las curvas de luz, las frecuencias de prueba y la cantidad de curvas de luz para las cuales se calculará el periodograma, según el cual se dividen las curvas de luz y se envían en lotes para no sobrecargar la memoria. Se ignoran varias funciones de GCE que no se reimplementaron en GMHAOV, ya que las interfaces que ofrecen son compatibles con cualquier periodograma, como por ejemplo la función que encuentra el máximo o mínimo del mismo.
+\begin{lstlisting}[language=Python]
 def batched_run_const_nfreq(self, lightcurves, batch_size, freqs):
 ...
     # split by light curve batches
@@ -450,13 +391,10 @@ def batched_run_const_nfreq(self, lightcurves, batch_size, freqs):
 ...
 \end{lstlisting}
 
-Antes de realizar el cálculo del periodograma es necesario determinar el largo de cada curva de luz y el largo máximo entre todas las curvas de luz usando el ciclo de la linea 6 del bloque de código \ref{code:data-prep-2}.  Estos valores son necesarios para determinar el tamaño que cada bloque de threads debe tener, pues estos deben tener a lo menos un thread por punto de la curva de luz. Luego en las lineas 17 a 21 se crean arreglos para los tiempos, magnitudes y errores para las curvas de luz, donde cada arreglo tiene un largo equivalente al de la curva más larga, y las entradas adicionales se rellenan con ceros.
+Antes de realizar el cálculo del periodograma es necesario determinar el largo de cada curva de luz y el largo máximo entre todas las curvas de luz. Estos valores son necesarios para determinar el tamaño que cada bloque de threads debe tener, pues estos deben tener a lo menos un thread por punto de la curva de luz. Luego se crean arreglos para los tiempos, magnitudes y errores para las curvas de luz, donde cada arreglo tiene un largo equivalente al de la curva más larga, y las entradas adicionales se rellenan con ceros.
 
-Originalmente, GCE realizaba otros cálculos relacionados al binning de las magnitudes y los tiempos, además de considerar los valores de la derivada del periodo $\dot p$, pero esto fue removido ya que MHAOV no es capaz de calcular este valor, y el código fue adaptado para funcionar sin esto.
-\begin{lstlisting}[
-language=Python,
-label={code:data-prep-2},
-caption=Segunda parte de la inicialización]
+Originalmente, GCE realizaba otros cálculos relacionados al binning de las magnitudes y los tiempos, además de considerar los valores de $\dot p$, pero esto fue removido y el código fue adaptado para funcionar sin esto.
+\begin{lstlisting}[language=Python]
 
 # determine maximum length of light curves in batch
 # also find minimum and maximum magnitudes for each light curve
@@ -480,11 +418,8 @@ light_curve_mags = light_curve_arr[:, :, 1]
 light_curve_errs = light_curve_arr[:, :, 2]
 \end{lstlisting}
 
-Luego en la lineas 2 a 10 del Código \ref{code:data-prep-3} se aplanan los arreglos para formar tres arreglos que contienen los datos de todas las curvas, y se cargan en la memoria de la GPU usando la función de cupy \texttt{xp.asarray} junto con el arreglo que contiene las frecuencias de prueba, el arreglo que contendrá los resultados del periodograma y el arreglo que contiene el número de armónicos con el que se correrá el periodograma para cada curva, el cual por ahora se inicializa con solo unos. En la linea 24 se llama al envoltorio de la función que llama al kernel con los arreglos creados y otros datos como el número de frecuencias y el número de curvas de luz.
-\begin{lstlisting}[
-language=Python,
-label={code:data-prep-3},
-caption=Tercera parte de la inicialización]
+Luego se aplanan los arreglos para formar tres arreglos muy largos, y se cargan en la memoria de la GPU usando la función de cupy \texttt{xp.asarray} junto con el arreglo que contiene las frecuencias de prueba, el arreglo que contendrá los resultados del periodograma y el arreglo que contiene el número de armónicos con el que se correrá el periodograma para cada curva. Luego se llama al envoltorio de la función que llama al kernel con los arreglos creados y otros datos como el número de frecuencias y el número de curvas de luz.
+\begin{lstlisting}[language=Python]
         # flatten everything
         light_curve_times_in = (
             xp.asarray(light_curve_times).flatten().astype(self.dtype)
@@ -524,12 +459,9 @@ caption=Tercera parte de la inicialización]
             len(light_curve_times), len(freqs_in)
         )
 \end{lstlisting}
-En la última línea se cambia la forma del arreglo con los resultados del periodograma de manera que sea un arreglo de los valores de $\Theta$ para cada curva de luz.
+En la última linea se cambia la forma del arreglo con los resultados del periodograma de manera que sea un arreglo de los valores de $\Theta$ para cada curva de luz.
 El envoltorio de la función que llama al kernel está escrito en Cython, y usa una decoración que reemplaza los arreglos que recibe la función como argumentos por sus punteros en memoria. En este caso, como los arreglos están en memoria de la GPU, estos son reemplazados por los punteros a su localización en la GPU. Luego, la función en CUDA \texttt{run\_gmhaov}, encargada de hacer las llamadas al kernel, es ejecutada con estos punteros como argumentos.
-\begin{lstlisting}[
-language=Python,
-label={code:cython-wrapper},
-caption=Wrapper en Cython]
+\begin{lstlisting}[language=Python]
 @pointer_adjust
 def run_gmhaov_wrap(per, freqs, num_freqs, mjds, mags, errs, num_pts_arr, Nharmonics_arr, num_lcs, num_pts_max,  wmeans_arr, wvars_arr):
     cdef size_t per_in = per
@@ -547,13 +479,10 @@ def run_gmhaov_wrap(per, freqs, num_freqs, mjds, mags, errs, num_pts_arr, Nharmo
 \end{lstlisting}
 
 \section{Paralelización}\label{sec:paralelización-implementacion}
-Como la memoria local usada por cada bloque es dinámica, es decir, puede ser distinta en cada ejecución, y los arreglos relevantes ya están en la memoria de la GPU, \texttt{run\_gmhaov} es una función relativamente corta, pues no necesita mover objetos desde la memoria del host a la del dispositivo. El tamaño de la grilla, determinado en la linea 3 del Código \ref{code:kernel-wrapper}, se escoge como el número de frecuencias en el eje $x$ y el número de curvas de luz en el eje $y$. La memoria de cada bloque, calculada en la linea 6, es el espacio que ocupará cada curva de luz más los arreglos necesarios para hacer las reducciones descritas en la Sección \ref{sec:paralelizacion}.
+Como la memoria local usada por cada bloque es dinámica, y los arreglos relevantes ya están en la memoria de la GPU, \texttt{run\_gmhaov} es una función relativamente corta, pues no necesita mover objetos desde la memoria del host a la del dispositivo. El tamaño de la grilla se escoge como el número de frecuencias en el eje $x$ y el número de curvas de luz en el eje $y$. La memoria de cada bloque es el espacio que ocupará cada curva de luz más los arreglos necesarios para hacer las reducciones descritas en \ref{sec:paralelizacion}.
 
-Como siempre es conveniente tener potencias de $2$ como tamaño de bloque, se aproxima el largo máximo de las curvas de luz a su potencia de $2$ superior más cercana y se elije esta como tamaño de bloque, considerando un valor máximo de $1024$. El objetivo es que cada bloque pueda procesar completamente cada curva de luz. Para curvas de luz con más de $1024$ puntos, el kernel se debería encargar de cubrir todos los puntos.
-\begin{lstlisting}[
-language=C,
-label={code:kernel-wrapper},
-caption=Wrapper del kernel]
+Como siempre es conveniente tener potencias de $2$ como tamaño de bloque, para esto se aproxima el largo máximo de las curvas de luz a su potencia de $2$ superior más cercana y se elije esta como tamaño de bloque, considerando un valor máximo de $1024$. El objetivo es que cada bloque pueda procesar completamente cada curva de luz. Para curvas de luz con más de $1024$ puntos, el kernel se debería encargar de cubrir todos los puntos.
+\begin{lstlisting}[language=C]
 void run_gmhaov(fod *d_per, fod *d_freqs, int num_freqs, fod *d_mag, fod *d_mjd, fod *d_err,
                  int *num_pts_arr, int *Nharmonics_arr, int num_lcs, int num_pts_max, float *wmeans_arr, float *wvars_arr){
     dim3 griddim(num_freqs, num_lcs, 1); 
@@ -586,12 +515,9 @@ void run_gmhaov(fod *d_per, fod *d_freqs, int num_freqs, fod *d_mag, fod *d_mjd,
 }
 \end{lstlisting}
 
-En el Código \ref{code:kernel}, el kernel empieza por crear el arreglo compartido \texttt{mag\_share}, que tiene el espacio necesario para guardar todos los arreglos locales que se usan en cada bloque. Se define entonces el resto de los arreglos como punteros a las secciones que le corresponden en memoria, listos para ser rellenados por los datos en memoria global, y finalmente se declaran las cantidades que se comparten en todo el bloque.
+El kernel empieza por crear el arreglo compartido \texttt{mag\_share}, que tiene el espacio necesario para guardar todos los arreglos locales que se usan en cada bloque. Se definen entonces el resto de los arreglos como punteros a las secciones que le corresponden en memoria, listos para ser rellenados por los datos en memoria global, y finalmente se declaran las cantidades que se comparten en todo el bloque.
 
-\begin{lstlisting}[
-language=C++,
-label={code:kernel},
-caption=Inicialización de memoria en el kernel del algoritmo]
+\begin{lstlisting}[language=C++]
     
 __global__ void kernel(fod* __restrict__ d_per,
                         fod* d_freqs, int num_freqs,
@@ -615,11 +541,8 @@ __global__ void kernel(fod* __restrict__ d_per,
     __shared__ fod sci;
     ...
 \end{lstlisting}
-En caso que se haya elegido un tamaño de grilla en el eje $y$ menor al número de curvas de luz, se introduce un ciclo que se asegura que todas las curvas de luz sean procesadas, empezando por $lc_i = \text{blockIdx.y}$. Luego se carga en memoria local la curva de luz actual de forma paralela, y se itera en frecuencias en el eje $x$ de la misma manera que se hace en el eje $y$, empezando por $f_i = \text{blockIdx.x}$. Se definen las variables que se usarán para el cálculo de $\Theta$, y uno de los threads inicializa a $\Theta=0$.
-\begin{lstlisting}[
-language=C++,
-label={code:kernel-2},
-caption=Inicialización de variables en el kernel]
+En caso de que se haya elegido un tamaño de grilla en el eje $y$ menor al número de curvas de luz, se introduce un ciclo que se asegura que todas las curvas de luz sean procesadas, empezando por $lc_i = \text{blockIdx.y}$. Luego se carga en memoria la curva de luz actual de forma paralela, y se itera en frecuencias en el eje $x$ de la misma manera que se hace en el eje $y$, empezando por $f_i = \text{blockIdx.x}$. Se definen las variables que se usarán para el cálculo de $\Theta$, y uno de los threads inicializa a $\Theta=0$.
+\begin{lstlisting}[language=C++]
     for (int lc_i = blockIdx.y; lc_i < num_lcs; lc_i += gridDim.y){
         int num_pts_current = num_pts_arr[lc_i];
             int current_index = lc_i * num_pts_max + i;
@@ -635,11 +558,8 @@ caption=Inicialización de variables en el kernel]
             if (idx == 0) aov = 0;
             ...
 \end{lstlisting}
-Un problema con la implementación de GMHAOV es que si la curva de luz tiene un largo mayor que el tamaño de bloque máximo de $1024$, no es posible cubrirla en el periodograma y el algoritmo deja de funcionar. El algoritmo toma $i=idx$, el $id$ del thread en el bloque, y calcula $wmean$ y $wvar$ encontrando el aporte de cada valor a estos valores y luego usando reducción para encontrar sus valores finales en las lineas 2 a la 11 del código \ref{code:kernel-3}.
-\begin{lstlisting}[
-language=C++,
-label={code:kernel-3},
-caption=Cálculo de wmean y wvar en el kernel]
+Un problema con la implementación de GMHAOV es que si la curva de luz tiene un largo mayor que el tamaño de bloque máximo de $1024$, no es posible cubrirla en el periodograma y el algoritmo deja de funcionar. El algoritmo toma $i=idx$, el $id$ del thread en el bloque, y calcula $wmean$ y $wvar$ encontrando el aporte de cada valor a estos valores y luego usando reducción para encontrar sus valores finales.
+\begin{lstlisting}[language=C++]
             ...
             w_sum_sum[i] = 1.0 / powf(abs(error_share[i]), 2.0f);
             w_mean_sum[i] = mag_share[i] / powf(abs(error_share[i]), 2.0f); }
@@ -661,11 +581,8 @@ caption=Cálculo de wmean y wvar en el kernel]
             __syncthreads();
             ...
 \end{lstlisting}
-Luego se procede de según lo indicado en el Algoritmo 2,  presentado en \ref{sec:arquitectura-mhaov}, siendo la diferencia principal que el algoritmo calcula el aporte de cada punto a los valores de $\alpha$, $c$ y $sn$ desde las lineas 13 a 14 del código \ref{code:kernel-4} y los utiliza para obtener sus valores finales usando reducción entre las lineas 23 y 32. Es necesario sincronizar el bloque después de inicializar las variables, al terminar de calcular los aportes de cada punto, como parte de la reducción, y después de calcular el aporte del ciclo a $\Theta$ en la linea 46. Finalmente se actualizan los valores de $s_r, \ si_i, \ zn_r, \ zn_i, \ p_r$ y $ p_i$ entre las lineas 49 y 58.
-\begin{lstlisting}[
-language=C++,
-label={code:kernel-4},
-caption=Loop principal del kernel]
+Luego se procede de forma análoga al pseudocódigo presentado en \ref{sec:arquitectura-mhaov}, con la diferencia principal siendo que el algoritmo calcula el aporte de cada punto a los valores de $\alpha$, $c$ y $sn$ y los utiliza para obtener sus valores finales usando reducción. Es necesario sincronizar el bloque después de inicializar las variables, al terminar de calcular los aportes de cada punto, como parte de la reducción, y después de calcular el aporte del ciclo a $\Theta$.
+\begin{lstlisting}[language=C++]
         fod arg = d_freqs[fi] * time_share[i];
             fod phi = 2 * PI * (arg - floor(arg));
             zr = cos(phi);
@@ -726,11 +643,8 @@ caption=Loop principal del kernel]
                 znr = tmp;
             }
 \end{lstlisting}
-Finalmente, en el Código \ref{code:kernel-4} el primer thread calcula el valor final de $\Theta$, y se coloca en el arreglo que contiene el resultado del periodograma para todas las curvas.
-\begin{lstlisting}[
-language=C++,
-label={code:kernel-4},
-caption=Resultado del periodograma]
+Finalmente, el primer thread calcula el valor final de $\Theta$, y se coloca en el arreglo que contiene el resultado del periodograma para todas las curvas.
+\begin{lstlisting}[language=C++]
             if (idx == 0) {
                 fod d1 = 2 * Nharmonics_arr[lc_i];
                 fod d2 = num_pts_arr[lc_i] - Nharmonics_arr[lc_i] * 2 - 1;
@@ -739,11 +653,8 @@ caption=Resultado del periodograma]
 \end{lstlisting}
 
 \section{Promediado de subarmonicos}\label{sec:subarmonicos-implementacion}
-El periodograma entrega el arreglo \texttt{thetas} que contiene los valores de $\Theta(\omega)$ para cada curva, que puede ser usado para encontrar los máximos locales más relevantes del periodograma. Para esto, se usa la función \texttt{argrelextrema} del paquete Scipy, que encuentra los índices para los cuales $\Theta$ es mayor que sus vecinos a cierta distancia. Estos máximos se ordenan según su valor asociado de $\Theta$ y la función entrega el arreglo con los índices de las frecuencias que representan señales significativas para la curva de luz. Esta función se llama para todas las curvas y los resultados se colocan en un arreglo que contiene el índice de todas las señales significativas, ordenadas por su valor en el periodograma.
-\begin{lstlisting}[
-language=Python,
-label={code:ps-1},
-caption=Obtención de candidatos a frecuencia]
+El periodograma entrega el arreglo \texttt{thetas} que contiene los valores de $\Theta(\Omega)$ para cada curva, el cual puede ser usado para encontrar los máximos locales más relevantes. Para esto, se usa la función \texttt{argrelextrema} del paquete Scipy, que encuentra los índices para los cuales $\Theta$ es mayor que sus vecinos a cierta distancia. Estos máximos se ordenan según su valor asociado de $\Theta$ y la función entrega el arreglo con los índices de las frecuencias que representan señales significativas para la curva de luz. Esta función se llama para todas las curvas y los resultados se colocan en un arreglo que contiene el índice de todas las señales significativas, ordenadas por su valor en el periodograma.
+\begin{lstlisting}[language=Python]
 def find_local_maxima(theta, n_local_optima=10, order=2):
     local_optima_index = argrelextrema(theta, np.greater, order=order)[0]
     if(len(local_optima_index) < n_local_optima):
@@ -762,13 +673,10 @@ def get_significant_signals(thetas, n_significant_signals = 10, order=2, signal_
         significant_signals_arr.append(local_optima_index)
     return significant_signals_arr
 \end{lstlisting}
-Este arreglo \texttt{thetas} permite identificar señales reales como se describió en \ref{sec:subarmonicos-diseno}, iterando sobre las señales significativas de todas las curvas de luz. Primero se identifica si es que hay alguna otra señal significativa en la mitad de la frecuencia, si no la hay entonces la señal es falsa y se ignora. En el caso contrario, se le asigna un puntaje igual al promedio del valor de $\Theta$ en la frecuencia de la señal y de su primer subarmónico. Si este puntaje está dentro de un cierto rango de tolerancias ajustable, entonces esta señal se identifica como asociada a la frecuencia real y se pasa a la siguiente curva. Se pueden ignorar las siguientes señales pues como están ordenadas son más débiles que la primera señal real.
+Este arreglo permite identificar señales reales como se describió en \ref{sec:subarmonicos-diseno}, iterando sobre las señales significativas de todas las curvas de luz. Primero se identifica si es que hay alguna otra señal significativa en la mitad de la frecuencia, si no lo hay entonces la señal es falsa y se ignora. En el caso contrario, se le asigna un puntaje igual al promedio del valor de $\Theta$ en la frecuencia de la señal y de su primer subarmónico. Si este puntaje está dentro de un cierto rango de tolerancias ajustable, entonces esta señal se identifica como asociada a la frecuencia real y se pasa a la siguiente curva. Se pueden ignorar las siguientes señales pues como están ordenadas son más débiles que la primera señal real.
 
-En caso de que ninguna de las señales significativas pasen esta prueba, entonces se elige como frecuencia real la primera de la lista. Es importante notar que al asignarle un puntaje a la frecuencia elegida por el periodograma, este se puede usar como característica para el clasificador en vez de tener un corte dado por el usuario.
-\begin{lstlisting}[
-language=Python,
-label={code:ps-2},
-caption=Búsqueda de la frecuencia final]
+En caso de que ninguna de las señales significativas pasen esta prueba, entonces se elige como frecuencia real la primera de la lista. Es importante notar que al asignarle un puntaje a la frecuencia elegida por el periodograma, este se puede usar como característica para el clasificador en ves de tener un corte dado por el usuario.
+\begin{lstlisting}[language=Python]
     def get_best_indices(significant_signals_arr, thetas, tol, freqs_test, score_tol_lower=0, score_tol_upper=np.inf):
     best_indices = []
     for lc_i, significant_signals in enumerate(significant_signals_arr):
@@ -793,9 +701,9 @@ caption=Búsqueda de la frecuencia final]
 \chapter{Resultados}\label{chap:resultados}
 En esta sección se detallan los resultados de la validación y evaluación de los algoritmos, y se describe la comparación de rendimiento entre ellos. Todas las pruebas fueron realizadas en un computador con un procesador Intel Core i7-9750H de 12 núcleos lógicos y una GPU Nvidia GeForce 1660 Ti con 6GB de memoria.
 \section{Validación de GMHAOV}\label{sec:validacion}
-GMHAOV se validó usando el generador de curvas de luz incluido con MHAOV, y se calculó la raíz de la suma de los cuadrados de las diferencias relativas entre los resultados de MHAOV y GMHAOV, y ese valor se dividío por la cantidad de curvas de luz y la cantidad de frecuencias de prueba para obtener el error relativo promedio por curva por valor de $\Theta$. Con $1000$ curvas generadas sintéticamente por el generador de P4J \footnote{https://github.com/alercebroker/P4J} y $10000$ frecuencias de prueba, este valor corresponde a $4.8 \times 10^{-7}$, lo cual se encuentra dentro de los rangos aceptables.
+GMHAOV se validó usando el generador de curvas de luz incluido con MHAOV, y se calculó la suma de los cuadrados de las diferencias relativas entre los resultados de MHAOV y GMHAOV divido por la cantidad de curvas de luz y la cantidad de frecuencias relativas para obtener el error relativo cuadrático promedio por curva por valor de $\Theta$. Con $100$ curvas de $150$ puntos y $700$ frecuencias de prueba, este valor corresponde a $5.58 \times 10^{-9}$, lo cual se encuentra dentro de los rangos aceptables.
 
-Usando $1000$ curvas de luz de de  RR Lyrae con las que se evaluó inicialmente MHAOV y GCE en el capítulo \ref{sec:mhaov-vs-gce}, y $10000$ frecuencias de prueba, se obtuvo un valor del error cuadrático de $0.063$, lo que corresponde a un error promedio de un $6.3\%$ para cada valor del periodograma. Esto es considerable, y al inspeccionar en qué valores hay una diferencia importante, se observa que hay ciertas curvas de luz problemáticas donde la diferencia entre ambos algoritmos es considerablemente mayor que para otras curvas. Sin embargo, estas curvas problemáticas no presentan ninguna diferencia inmediatamente evidente del resto, ni en su forma ni en su cantidad de puntos, por lo que sería necesario estudiar este problema a fondo.
+Usando $1000$ curvas de luz de RR Lyrae con las que se evaluó inicialmente MHAOV y GCE, como se describió en el capítulo \ref{sec:mhaov-vs-gce} y $700$ curvas de luz, se obtuvo un valor de $1.51$, lo que indica un error promedio de cerca de un $120\%$ al calcular su raíz cuadrada. Esto es considerable, y al inspeccionar en qué valores hay una diferencia problemática, y se observa que hay ciertas curvas de luz problemáticas donde la diferencia entre ambos algoritmos es considerablemente mayor que para otras curvas, pero estas curvas problemáticas no presentan ninguna diferencia inmediatamente evidente del resto, ni en su forma ni en su cantidad de puntos, por lo que sería necesario estudiar este problema a fondo.
 
 \begin{figure}[H]
     \centering
@@ -803,15 +711,14 @@ Usando $1000$ curvas de luz de de  RR Lyrae con las que se evaluó inicialmente 
     \caption{Resultado del periodograma para MHAOV (Arriba) y GMHAOV (Centro), y la diferencia entre ambos (Abajo).}
     \label{fig:problemas}
 \end{figure}
-En la figura \ref{fig:problemas} se pueden apreciar que la diferencia entre ambos periodogramas es notable, en especial en los peaks que están desplazados levemente, pero no es suficiente como para cambiar significativamente la frecuencia que corresponde al máximo. De hecho al comparar la precisión de ambos algoritmos, ésta solamente disminuye desde $80\%$ a $79\%$ para RR Lyrae.
+En la figura \ref{fig:problemas} se pueden apreciar que la diferencia entre ambos periodogramas es notable, en especial en los peaks que están desplazados levemente, pero no es suficiente como para cambiar a las principales señales significativas, y de hecho al comparar la precisión de ambos algoritmos, esta solamente disminuye desde $80\%$ a $79\%$ para RR Lyrae.
 
-\section{Efecto del promediado de subarmónicos}\label{sec:efectos-subarmonicos}
+\section{Efecto de el promediado de subarmónicos}\label{sec:efectos-subarmonicos}
 
-Se evaluó el efecto en la precisión del GMHAOV y GCE al introducir el promediado de subarmónicos usando los conjuntos de datos mencionados en la Sección \ref{sec:mhaov-vs-gce}. 
-\subsection{Promediado de subarmónicos (PS)}
-A continuación se presentan los efectos de introducir el promediado de subarmónicos en el cálculo del periodo. 
+Se evaluó el efecto en la precisión del GMHAOV y GCE al introducir el promediado de subarmónicos usando los conjuntos de datos mencionados en \ref{sec:mhaov-vs-gce}. 
+\subsection{Promediado de subarmónicos}
 \subsubsection{RR Lyrae}
-En la tabla \ref{table:rrl-PS}, se observa que si bien PS logra obtener el período correcto para algunos objetos, los objetos para los que ya no se tiene el período correcto son casi el doble para ambos algoritmos. De la tabla \ref{table:rrl-PS-detalle} se puede notar que al aplicar PS en GCE, la cantidad de submúltiplos, o fracción de curvas para las cuales se calcula una fracción, como la mitad o un tercio, del periodo original se reduce casi en un $50\%$, pero la cantidad de múltiplos, o fracción de curvas para las cuales se calcula un múltiplo del periodo, como el doble o el triple, casi se triplica, mientras que en GMHAOV los múltiplos incrementan levemente mientras que los submúltiplos se eliminan completamente.
+En la tabla \ref{table:rrl-PS}, se observa que si bien PS logra obtener el período correcto para algunos objetos, los objetos para los que ya no se tiene el período correcto son casi el doble para ambos algoritmos. De la tabla \ref{table:rrl-PS-detalle} se puede notar que al aplicar PS en GCE, la cantidad de submúltiplos se reduce casi en un $50\%$, pero la cantidad de múltiplos casi se triplica, mientras que en GMHAOV los múltiplos incrementan levemente mientras que los submúltiplos se eliminan completamente.
 
 \begin{table}[H]
 \caption{Diferencias en la precisión de GCE y GMHAOV al aplicar promediado de subarmonicos (PS).}
@@ -863,7 +770,7 @@ GCE & 7.2 & 0.55 & 2.65 & 89.60 \\ \hline
 \label{table:eb-PS}
 \end{table}
 
-\subsection{Efecto del promediado de armónicos (PA)}\label{sec:efectos-subarmonicos}
+\subsection{Efecto de el promediado de armónicos}\label{sec:efectos-subarmonicos}
 Como se observó en algunos periodogramas, usualmente hay una señal significativa en el doble de la frecuencia en vez de la mitad, así que se decide probar el promediado con la medida de confianza en el doble de la frecuencia, y le denominaremos a esto promediado de armónicos (PA).
 \subsubsection{RR Lyrae}
 De la tabla \ref{table:rrl-PA}, se reduce la cantidad de múltiplos como es de esperar, pero el efecto negativo del PA lleva a su efecto neto sea negativo.
@@ -897,14 +804,14 @@ GCE & 9.85 & 44.40 & 0.30 & 0.95 & 44.50 \\ \hline
 \end{table}
 
 \section{Comparación de rendimiento}\label{sec:rendimiento}
-Para la evaluación del rendimiento, se utilizó el generador de curvas de luz incluido en el repositorio de MHAOV, que permite generar curvas de luz con ruido simulado y una determinada cantidad de puntos fácilmente. Se evaluó el rendimiento de MHAOV, GMHAOV, GCE y el impacto del promediado de subarmónicos en el tiempo de ejecución de GMHAOV para $N=10,\ldots,10^{4}$ curvas de luz con $150$ puntos\footnote{El largo promedio de las curvas de luz de ALeRCE.} cada una y una resolución de frecuencias de $\text{fres}=10^{-2}, 10^{-3}, 10^{-4}$ y $10^{-5}$ desde las frecuencias $0.2$ a $0.9$. MHAOV se lanza dividiendo las curvas en $8$ y ejecutándolo de forma paralela en CPU.
+Para la evaluación del rendimiento, se utilizó el generador de curvas de luz incluido en el repositorio de MHAOV, que permite generar curvas de luz con ruido simulado y una determinada cantidad de puntos fácilmente. Se evaluó el rendimiento de MHAOV, GMHAOV, GCE y el impacto del promediado de subarmónicos en el tiempo de ejecución de GMHAOV para $N=10,\ldots,10^{4}$ curvas de luz con $150$ puntos\footnote{El largo promedio de las curvas de luz de ALeRCE.} cada una y una resolución de frecuencias de $\text{fres}=10^{-2}, 10^{-3}, 10^{-4}, 10^{-5}$ en un rango de $0.7$. MHAOV se lanza dividiendo las curvas en $8$ y ejecutándolo de forma paralela en CPU.
 
 Para cada combinación de valores de prueba, se mide el tiempo de ejecución de MHAOV, GMHAOV, GCE y el promediado de subarmónicos. Los resultados se encuentran en la figura \ref{fig:benchmarks}. El tiempo de ejecución por curva se muestra en la Figura \ref{fig:benchmark-por-curva}
 \begin{figure}[h]
 
     \centering
     \includegraphics[width=0.8\textwidth]{figs/benchmarks-total.png}
-    \caption{Resultados de las pruebas para cada combinación de frecuencias y número de curvas de luz simultaneas. La línea punteada representa el tiempo de ejecución de MHAOV sumado al tiempo de ejecución del promediado de subarmónicos.}
+    \caption{Resultados de las pruebas para cada combinación de frecuencias y número de curvas de luz simultaneas. La linea punteada representa el tiempo de ejecución de MHAOV sumado al tiempo de ejecución del promediado de subarmónicos.}
     \label{fig:benchmarks}
 \end{figure}
 
@@ -930,13 +837,13 @@ Es importante destacar, sin embargo, que el tiempo de ejecución en GPU y del pr
 
 \chapter{Análisis y conclusión}\label{chap:conclusión}
 
-En este cápitulo se hacen conclusiones a partir de los resultados, y se discute el trabajo futuro.
+En este capitulo se hacen conclusiones a partir de los resultados, y se discute el trabajo futuro.
 
 \section{Análisis de los resultados}\label{sec:analisis}
 
-Es de gran importancia determinar qué características de las curvas de luz problemáticas descritas en \ref{sec:validacion} causan la diferencia en los periodogramas obtenidos por MHAOV y su versión en GPU. Sin embargo, el efecto de esta diferencia, si bien es significativo, no cambia completamente los resultados del periodograma, al menos con los tipos de curvas con las que se hicieron pruebas.
+Es de gran importancia determinar que características de las curvas de luz problemáticas descritas en \ref{sec:validacion} causan la diferencia en los periodogramas obtenidos por MHAOV y su versión en GPU. Sin embargo, el efecto de esta diferencia, si bien es significativo, no cambia completamente los resultados del periodograma, al menos con los tipos de curvas con las que se hicieron pruebas.
 
-De los resultados de la sección \ref{sec:efectos-subarmonicos}, se observa que considerar el PS o PA puede ser beneficioso en algunos casos, si se incluye el puntaje asociado por a la frecuencia corregida, calculado en el Código \ref{code-ps-2}, como característica en el clasificador, este podrá aprender a discriminar en que situaciones es bueno considerar este puntaje y en cuales se puede ignorar. %Además, por lo descrito en \ref{sec:rendimiento}, GMHAOV es una mejora tan significativa que si se incluye el cálculo de estos puntajes el tiempo de ejecución será menor al de MHAOV a menos que se procesen una cantidad de curvas del orden de $10^{4}$.
+De los resultados de la sección \ref{sec:efectos-subarmonicos}, se observa que considerar el PS o PA puede ser beneficioso en algunos casos, y se cree que si se le da el puntaje asociado a la frecuencia elegida por el periodograma al clasificador, este podrá aprender a discriminar en que situaciones es bueno considerar este puntaje y en cuales se puede ignorar. %Además, por lo descrito en \ref{sec:rendimiento}, GMHAOV es una mejora tan significativa que si se incluye el cálculo de estos puntajes el tiempo de ejecución será menor al de MHAOV a menos que se procesen una cantidad de curvas del orden de $10^{4}$.
 Además, por lo descrito en \ref{sec:rendimiento}, la reducción en tiempo de ejecución de GMHAOV con respecto a MHAOV es tal que el tiempo de cálculo de los puntajes sumado al de GMHAOV es siempre menor al de MHAOV a menos que se procesen una cantidad de curvas del orden de $10^{4}$.
 
 %De las pruebas de rendimiento se puede concluir que a pesar de que GCE es más rápido que GMHAOV, la precisión de MHAOV es mucho mejor por lo que la implementación de esta versión del algoritmo de cálculo de periodos reduciría significativamente el tiempo de ejecución.
